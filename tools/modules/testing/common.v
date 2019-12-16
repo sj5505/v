@@ -5,6 +5,8 @@ import (
 	term
 	benchmark
 	filepath
+	time
+	runtime
 )
 
 pub struct TestSession {
@@ -17,6 +19,10 @@ pub mut:
 
 	ok string
 	fail string
+mut:
+	show_stats bool
+	done int atomic
+	idx int atomic
 }
 
 pub fn new_test_session(vargs string) TestSession {
@@ -41,59 +47,90 @@ pub fn (ts mut TestSession) init() {
 	ts.benchmark = benchmark.new_benchmark()
 }
 
-pub fn (ts mut TestSession) test() {
-	ts.init()
-	show_stats := '-stats' in ts.vargs.split(' ')
-	for dot_relative_file in ts.files {
-		relative_file := dot_relative_file.replace('./', '')
-		file := os.realpath( relative_file )
-		$if windows {
-			if file.contains('sqlite') { continue }
-		}
-		$if !macos {
-			if file.contains('customer') { continue }
-		}
-		$if msvc {
-			if file.contains('asm') { continue }
-		}
-		$if tinyc {
-			if file.contains('asm') { continue }
-		}
-		tmpc_filepath := file.replace('.v', '.tmp.c')
-
-		cmd := '"$ts.vexe" $ts.vargs "$file"'
-		//eprintln('>>> v cmd: $cmd')
-
-		ts.benchmark.step()
-		if show_stats {
-			eprintln('-------------------------------------------------')
-			status := os.system(cmd)
-			if status == 0 {
-				ts.benchmark.ok()
-			}else{
-				ts.benchmark.fail()
-				ts.failed = true
-				continue
-			}
-		}else{
-			r := os.exec(cmd) or {
-				ts.benchmark.fail()
-				ts.failed = true
-				eprintln(ts.benchmark.step_message('$relative_file ${ts.fail}'))
-				continue
-			}
-			if r.exit_code != 0 {
-				ts.benchmark.fail()
-				ts.failed = true
-				eprintln(ts.benchmark.step_message('$relative_file ${ts.fail}\n`$file`\n (\n$r.output\n)'))
-			} else {
-				ts.benchmark.ok()
-				eprintln(ts.benchmark.step_message('$relative_file ${ts.ok}'))
-			}
-		}
-		os.rm( tmpc_filepath )
+pub fn (ts mut TestSession) test_file(relative_file string) {
+	//ts.done++
+	file := os.realpath( relative_file )
+	$if windows {
+		if file.contains('sqlite') { return }
 	}
-	ts.benchmark.stop()
+	$if !macos {
+		if file.contains('customer') { return }
+	}
+	$if msvc {
+		if file.contains('asm') { return }
+	}
+	$if tinyc {
+		if file.contains('asm') { return }
+	}
+	tmpc_filepath := file.replace('.v', '.tmp.c')
+
+	cmd := '"$ts.vexe" $ts.vargs "$file"'
+	//eprintln('>>> v cmd: $cmd')
+
+	ts.benchmark.step()
+	if ts.show_stats {
+		eprintln('-------------------------------------------------')
+		status := os.system(cmd)
+		if status == 0 {
+			ts.benchmark.ok()
+		}else{
+			ts.benchmark.fail()
+			ts.failed = true
+			//ts.done--
+			return
+		}
+	}else{
+		r := os.exec(cmd) or {
+			ts.benchmark.fail()
+			ts.failed = true
+			eprintln(ts.benchmark.step_message('$relative_file ${ts.fail}'))
+			//ts.done--
+			return
+		}
+		if r.exit_code != 0 {
+			ts.benchmark.fail()
+			ts.failed = true
+			eprintln(ts.benchmark.step_message('$relative_file ${ts.fail}\n`$file`\n (\n$r.output\n)'))
+		} else {
+			ts.benchmark.ok()
+			eprintln(ts.benchmark.step_message('$relative_file ${ts.ok}'))
+		}
+	}
+	os.rm( tmpc_filepath )
+	//ts.done--
+}
+
+pub fn (ts mut TestSession) test() {
+	nr_cpus := runtime.nr_cpus()
+	println("Parallel test, nr_cpus=$nr_cpus")
+	ts.init()
+	ts.show_stats = '-stats' in ts.vargs.split(' ')
+	ts.done = nr_cpus
+	for _ in 0..nr_cpus {
+		go ts.test_worker()
+	}
+	// Wait for all workers to finish
+	for {
+		time.sleep(3)
+		if ts.done == 0 {
+			println('breaking')
+			break
+		}
+	}
+}
+
+fn (ts mut TestSession) test_worker() {
+	//for dot_relative_file in ts.files {
+	for {
+		if ts.idx >= ts.files.len {
+			break
+		}
+		dot_relative_file := ts.files[ts.idx]
+		ts.idx++
+		relative_file := dot_relative_file.replace('./', '')
+		ts.test_file(relative_file)
+	}
+	ts.done--
 }
 
 pub fn vlib_should_be_present( parent_dir string ) {
