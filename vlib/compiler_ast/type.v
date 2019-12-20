@@ -32,33 +32,33 @@ struct BoolType {}
 struct StringType {}
 
 struct OptionalType {
-	underlying Type
+	underlying Typer
 }
 
 struct StructType {
-	property_type map[string]Type
+	property_type map[string]Typer
 }
 
 struct FunctionType {
-	parameters  []Type
-	return_type Type
+	parameters  []Typer
+	return_type Typer
 }
 
 struct ArrayType {
-	element_type Type
+	element_type Typer
 }
 
 struct MapType {
-	key_type   Type
-	value_type Type
+	key_type   Typer
+	value_type Typer
 }
 
 struct PointerType {
-	pointed Type
+	pointed Typer
 }
 
 struct MutableType {
-	mutable Type
+	mutable Typer
 }
 
 fn greatest_common_type(left, right Typer) Typer {
